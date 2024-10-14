@@ -19,11 +19,12 @@ void output_matrix_3D(const double *a,const int ni,const int nj);
 void output_sheet(const double *a,const int ni,const int nj,const int layer);
 void output_matrix_2D(double *a,const int col,const int row);
 int jacobian(const int ni,const int nj,double *X,double *Y,double *J,double *xi_x,double *xi_y,double *eta_x,double *eta_y);
-int intial_EF(const int ni,const int nj,double *q,double *J,double *xi_x,double *xi_y,double *eta_x,double *eta_y,double *E,
-    double *F,const double gamma);
-int RHS(const int ni,const int nj,double *S,double *W,double *E,double *F,const double dt);
-int smooth(double *q, double *s, double *jac, double *xx, double *xy,double *yx, double *yy, int id, int jd, double *s2,
-    double *rspec, double *qv, double *dd,double epse, double gamma, double fsmach, double dt);
+int RHS(const int ni,const int nj,double *S,double *W, double *q, double *J, double *xi_x, double *xi_y, double *eta_x,
+    double *eta_y, const double gamma,const double dt);
+int smooth(double *q, double *s, double *jac, double *xx, double *xy,
+           double *yx, double *yy, int id, int jd, double *s2,
+           double *rspec, double *qv, double *dd,
+           double epse, double gamma, double fsmach, double dt);
 int update_Q(const int ni,const int nj,double *S,double *q,double *J);
 int BC(const int ni,const int nj, double *q,const int i_TEL,const int i_TEU,const double gamma, double *eta_x, double *eta_y,
     double *J, double *xi_x, double *xi_y);
@@ -34,7 +35,7 @@ int main() {
     float temp,temp1,temp2,temp3,temp4;
     const double dt = pow(10,-5),epse = 0.06;
 
-    FILE *grid_file = fopen("grid.txt", "r");
+    FILE *grid_file = fopen("mesh.txt", "r");
     if(read_size(grid_file,&ni,&nj) != OK) {
         printf("Something is worng with the input\n");
         return ERROR;
@@ -82,19 +83,17 @@ int main() {
     intial_Q(ni,nj,q,rho,Mach,gamma,P,alpha);
     jacobian(ni,nj,X,Y,J,xi_x,xi_y,eta_x,eta_y);
 
-    for(int i=0;i<5;i++) {
-        // if((i+1)%100==0)
+    for(int i=0;i<1000;i++) { //step
+        if((i+1)%100==0)
             printf("itaration %d \n",i+1);
-        intial_EF(ni,nj,q,J,xi_x,xi_y,eta_x,eta_y,E,F,gamma);
-        RHS(ni,nj,S,W,E,F,dt);
-        smooth(q,S,J,xi_x,xi_y,eta_x,eta_y,ni,nj,s2,rspec,qv,dd,epse,gamma,Mach,dt);
         BC(ni,nj,q,i_TEL,i_TEU,gamma,eta_x,eta_y,J,xi_x,xi_y);
+        RHS(ni,nj,S,W,q,J,xi_x,xi_y,eta_x,eta_y,gamma,dt);
+        smooth(q,S,J,xi_x,xi_y,eta_x,eta_y,ni,nj,s2,rspec,qv,dd,epse,gamma,Mach,dt);
         update_Q(ni,nj,S,q,J);
     }
     output_matrix_3D(q,ni,nj);
-    output_sheet(q,ni,nj,3);
-    // output_matrix_2D(xi_x,ni,nj);
-
+    output_sheet(q,ni,nj,0);
+    output_matrix_2D(J,ni,nj);
 
     // print_martix(X,1,ni,nj);
     // print_martix(Y,2,ni,nj);
@@ -192,10 +191,10 @@ void output_sheet(const double *a,const int ni,const int nj,const int layer) {
         for(int i=0;i<ni;i++) {
             if(i==ni-1)
                 // fprintf(fpo,"%lf cell:%d \n", a[offset3d(i,j,k,ni,nj)],offset3d(i,j,k,ni,nj));
-                fprintf(fpo,"%lf\n",a[offset3d(i,j,layer,ni,nj)]);
+                fprintf(fpo,"%g\n",a[offset3d(i,j,layer,ni,nj)]);
             else
                 // fprintf(fpo,"%lf cell:%d ", a[offset3d(i,j,k,ni,nj)],offset3d(i,j,k,ni,nj));
-                fprintf(fpo,"%lf ",a[offset3d(i,j,layer,ni,nj)]);
+                fprintf(fpo,"%g ",a[offset3d(i,j,layer,ni,nj)]);
 
         }
     }
@@ -203,13 +202,13 @@ void output_sheet(const double *a,const int ni,const int nj,const int layer) {
 
 void output_matrix_2D(double *a,const int col,const int row){
     FILE *fpo=NULL;
-    fpo = fopen("F_almog.txt","wt");
+    fpo = fopen("Jacobian.txt","wt");
     for (int i = 0; i < row; i++) {
         for(int j=0;j<col;j++) {
             if(j==col-1)
-                fprintf(fpo,"%lf\n", a[offset2d(j, i, col)]);
+                fprintf(fpo,"%g\n", a[offset2d(j, i, col)]);
             else
-                fprintf(fpo,"%lf ", a[offset2d(j, i, col)]);
+                fprintf(fpo,"%g ", a[offset2d(j, i, col)]);
             }
         }
     fclose(fpo);
@@ -292,35 +291,15 @@ int jacobian(const int ni,const int nj,double *X,double *Y,double *J,double *xi_
     return OK;
 }
 
-int intial_EF(const int ni, const int nj, double *q, double *J, double *xi_x, double *xi_y, double *eta_x,double *eta_y,
-    double *E, double *F, const double gamma) {
-    for(int i=0;i<ni;i++) {
-        for(int j=0;j<nj;j++) {
-            const int index = offset2d(i,j,ni);
-            const double q0 = q[offset3d(i,j,0,ni,nj)];
-            const double q1 = q[offset3d(i,j,1,ni,nj)];
-            const double q2 = q[offset3d(i,j,2,ni,nj)];
-            const double q3 = q[offset3d(i,j,3,ni,nj)];
-            const double p = (gamma-1)*(q3-0.5*(pow(q1,2)+pow(q2,2))/q0);
-            const double U = xi_x[index]*(q1/q0) + xi_y[index]*(q2/q0);
-            const double V = eta_x[index]*(q1/q0) + eta_y[index]*(q2/q0);
+int RHS(const int ni,const int nj,double *S,double *W, double *q, double *J, double *xi_x, double *xi_y, double *eta_x,
+    double *eta_y, const double gamma,const double dt) {
+    // const int index_max = fmax(ni,nj);
+    // int index_min;
+    // if(index_max==ni)
+    //     index_min=nj;
+    // else
+    //     index_min=ni;
 
-            E[offset3d(i,j,0,ni,nj)] = q0*U/J[index];
-            E[offset3d(i,j,1,ni,nj)] = (q1*U+xi_x[index]*p)/J[index];
-            E[offset3d(i,j,2,ni,nj)] = (q2*U+xi_y[index]*p)/J[index];
-            E[offset3d(i,j,3,ni,nj)] = (q3+p)*U/J[index];
-
-            F[offset3d(i,j,0,ni,nj)] = q0*V/J[index];
-            F[offset3d(i,j,1,ni,nj)] = (q1*V+eta_x[index]*p)/J[index];
-            F[offset3d(i,j,2,ni,nj)] = (q2*V+eta_y[index]*p)/J[index];
-            F[offset3d(i,j,3,ni,nj)] = (q3+p)*V/J[index];
-        }
-    }
-    return OK;
-}
-
-int RHS(const int ni,const int nj,double *S,double *W,double *E,double *F,const double dt) {
-    const int index = fmax(ni,nj);
     for(int i=0;i<ni;i++)
         for(int j=0;j<nj;j++)
             for(int k=0;k<4;k++)
@@ -328,38 +307,56 @@ int RHS(const int ni,const int nj,double *S,double *W,double *E,double *F,const 
     /*xi direction*/
     for(int j=1;j<nj-1;j++) {
         for(int i=0;i<ni;i++) {
-            W[offset2d(i,0,index)]=E[offset3d(i,j,0,ni,nj)];/*continuity equation*/
-            W[offset2d(i,1,index)]=E[offset3d(i,j,1,ni,nj)];/*X momentum equation*/
-            W[offset2d(i,2,index)]=E[offset3d(i,j,2,ni,nj)];/*Y momentum equation*/
-            W[offset2d(i,3,index)]=E[offset3d(i,j,3,ni,nj)];/*Energy equation*/
+            const int index = offset2d(i,j,ni);
+            const double q0 = q[offset3d(i,j,0,ni,nj)];
+            const double q1 = q[offset3d(i,j,1,ni,nj)];
+            const double q2 = q[offset3d(i,j,2,ni,nj)];
+            const double q3 = q[offset3d(i,j,3,ni,nj)];
+            const double p = (gamma-1)*(q3-0.5*(pow(q1,2)+pow(q2,2))/q0);
+            const double U = xi_x[index]*(q1/q0) + xi_y[index]*(q2/q0);
+
+            W[offset2d(i,0,ni)]=q0*U/J[index]; /*continuity equation*/
+            W[offset2d(i,1,ni)]=(q1*U+xi_x[index]*p)/J[index];/*X momentum equation*/
+            W[offset2d(i,2,ni)]=(q2*U+xi_y[index]*p)/J[index];/*Y momentum equation*/
+            W[offset2d(i,3,ni)]=(q3+p)*U/J[index];/*Energy equation*/
         }
         for(int i=1;i<ni-1;i++) {
             for(int k=0;k<4;k++) {
-                S[offset3d(i,j,k,ni,nj)] += -0.5*dt*(W[offset2d(i+1,k,index)]-W[offset2d(i-1,k,index)]);
+                S[offset3d(i,j,k,ni,nj)] += -0.5*dt*(W[offset2d(i+1,k,ni)]-W[offset2d(i-1,k,ni)]);
             }
         }
     }
     /*eta direction*/
     for(int i=1;i<ni-1;i++) {
         for(int j=0;j<nj;j++) {
-            W[offset2d(j,0,index)]=F[offset3d(i,j,0,ni,nj)];/*continuity equation*/
-            W[offset2d(j,1,index)]=F[offset3d(i,j,1,ni,nj)];/*X momentum equation*/
-            W[offset2d(j,2,index)]=F[offset3d(i,j,2,ni,nj)];/*Y momentum equation*/
-            W[offset2d(j,3,index)]=F[offset3d(i,j,3,ni,nj)];/*Energy equation*/
+            const int index = offset2d(i,j,ni);
+            const double q0 = q[offset3d(i,j,0,ni,nj)];
+            const double q1 = q[offset3d(i,j,1,ni,nj)];
+            const double q2 = q[offset3d(i,j,2,ni,nj)];
+            const double q3 = q[offset3d(i,j,3,ni,nj)];
+            const double p = (gamma-1)*(q3-0.5*(pow(q1,2)+pow(q2,2))/q0);
+            const double V = eta_x[index]*(q1/q0) + eta_y[index]*(q2/q0);
+
+            W[offset2d(j,0,nj)]=q0*V/J[index];/*continuity equation*/
+            W[offset2d(j,1,nj)]=(q1*V+eta_x[index]*p)/J[index];/*X momentum equation*/
+            W[offset2d(j,2,nj)]=(q2*V+eta_y[index]*p)/J[index];/*Y momentum equation*/
+            W[offset2d(j,3,nj)]=(q3+p)*V/J[index];/*Energy equation*/
         }
         for(int j=1;j<nj-1;j++) {
             for(int k=0;k<4;k++) {
-                S[offset3d(i,j,k,ni,nj)] += -0.5*dt*(W[offset2d(j+1,k,index)]-W[offset2d(j-1,k,index)]);
+                S[offset3d(i,j,k,ni,nj)] += -0.5*dt*(W[offset2d(j+1,k,nj)]-W[offset2d(j-1,k,nj)]);
             }
         }
     }
     return OK;
 }
 
-
-int smooth(double *q, double *s, double *jac, double *xx, double *xy,double *yx, double *yy, int id, int jd, double *s2,
-    double *rspec, double *qv, double *dd,double epse, double gamma, double fsmach, double dt)
+int smooth(double *q, double *s, double *jac, double *xx, double *xy,
+           double *yx, double *yy, int id, int jd, double *s2,
+           double *rspec, double *qv, double *dd,
+           double epse, double gamma, double fsmach, double dt)
 {
+
     double *rho, *u_vel, *v_vel, *t_e;
 
     double eratio, smool, gm1, ggm1, cx, cy, eps, ra, u, v, qq, ss, st,
@@ -503,23 +500,23 @@ int BC(const int ni,const int nj, double *q,const int i_TEL,const int i_TEU,cons
         const double rho1 = q[offset3d(i,1,0,ni,nj)];
         const double p0 = (gamma-1)*(e1-0.5*rho1*(u1*u1+v1*v1));
         const double U1 = xi_x[offset2d(i,1,ni)]*u1+xi_y[offset2d(i,1,ni)]*v1;
-        const double u0 = eta_y[offset2d(i,0,ni)]*U1/J[offset2d(i,0,ni)];
-        const double v0 = -eta_x[offset2d(i,0,ni)]*U1/J[offset2d(i,0,ni)];
+        const double u0 = (eta_y[offset2d(i,0,ni)]*U1)/J[offset2d(i,0,ni)];
+        const double v0 = (-eta_x[offset2d(i,0,ni)]*U1)/J[offset2d(i,0,ni)];
         const double rho0 = rho1;
         q[offset3d(i,0,0,ni,nj)] = rho0; //rho
         q[offset3d(i,0,1,ni,nj)] = rho0*u0; //momentum x
         q[offset3d(i,0,2,ni,nj)] = rho0*v0; //momentum y
         q[offset3d(i,0,3,ni,nj)] = p0/(gamma-1)+0.5*rho0*(u0*u0+v0*v0); //energy
-        printf("%g\n",p0);
+        // printf("%g , index - %d\n",p0,offset2d(i,0,ni));
     }
     /*Trailing edge*/
     const double u_teu = q[offset3d(i_TEU-1,0,1,ni,nj)]/q[offset3d(i_TEU-1,0,0,ni,nj)];
     const double v_teu = q[offset3d(i_TEU-1,0,2,ni,nj)]/q[offset3d(i_TEU-1,0,0,ni,nj)];
-    const double p_teu = (gamma-1)*(q[offset3d(i_TEU-1,0,3,ni,nj)]-0.5*q[offset3d(i_TEU-1,0,0,ni,nj)]*(u_teu*u_teu+v_teu*v_teu));
+    const double p_teu = (gamma-1)*(q[offset3d(i_TEU-1,0,3,ni,nj)]-0.5*q[offset3d(i_TEU-1,0,0,ni,nj)]*(u_teu*u_teu + v_teu*v_teu));
 
     const double u_tel = q[offset3d(i_TEL-1,0,1,ni,nj)]/q[offset3d(i_TEL-1,0,0,ni,nj)];
     const double v_tel = q[offset3d(i_TEL-1,0,2,ni,nj)]/q[offset3d(i_TEL-1,0,0,ni,nj)];
-    const double p_tel = (gamma-1)*(q[offset3d(i_TEL-1,0,3,ni,nj)]-0.5*q[offset3d(i_TEL-1,0,0,ni,nj)]*(u_tel*u_tel+v_tel*v_tel));
+    const double p_tel = (gamma-1)*(q[offset3d(i_TEL-1,0,3,ni,nj)]-0.5*q[offset3d(i_TEL-1,0,0,ni,nj)]*(u_tel*u_tel + v_tel*v_tel));
 
     const double rho_te = 0.5*(q[offset3d(i_TEU-1,0,0,ni,nj)]+q[offset3d(i_TEL-1,0,0,ni,nj)]); // average density
     const double u_te = 0.5*(u_teu+u_tel); // average u
